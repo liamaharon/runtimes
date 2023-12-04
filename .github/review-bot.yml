@@ -1,0 +1,28 @@
+rules:
+  - name: CI Files
+    condition:
+      include:
+        - ^\.github/.*
+    type: fellows
+    minRank: 3
+    minApprovals: 2
+  - name: Relay and system files
+    condition:
+      include:
+        - ^relay\/.*
+        - ^system-parachains\/.*
+        - ^CHANGELOG.md$
+    type: fellows
+    minRank: 2
+    minApprovals: 3
+  - name: General Files
+    condition:
+      include:
+        - '.*'
+      exclude:
+        - ^relay\/.*
+        - ^system-parachains\/.*
+        - ^\.github/.*
+        - ^CHANGELOG.md$
+    type: fellows
+    minRank: 1
