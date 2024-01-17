@@ -17,10 +17,12 @@
 
 use crate::common::{get_account_id_from_seed, get_from_seed, testnet_accounts};
 use cumulus_primitives_core::ParaId;
+use encointer_kusama_runtime::{BalanceType, CeremonyPhaseType};
 use parachains_common::{AccountId, AssetHubPolkadotAuraId, AuraId, Balance};
 use sc_chain_spec::{ChainSpec, ChainSpecExtension, ChainSpecGroup, ChainType};
 use serde::{Deserialize, Serialize};
 use sp_core::sr25519;
+use sp_keyring::AccountKeyring::{Alice, Bob, Charlie};
 
 /// Generic extensions for Parachain ChainSpecs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ChainSpecGroup, ChainSpecExtension)]
@@ -62,8 +64,6 @@ const COLLECTIVES_POLKADOT_ED: Balance = parachains_common::polkadot::currency::
 const BRIDGE_HUB_POLKADOT_ED: Balance = parachains_common::polkadot::currency::EXISTENTIAL_DEPOSIT;
 
 const BRIDGE_HUB_KUSAMA_ED: Balance = parachains_common::kusama::currency::EXISTENTIAL_DEPOSIT;
-
-const ENCOINTER_KUSAMA_ED: Balance = parachains_common::kusama::currency::EXISTENTIAL_DEPOSIT;
 
 /// The default XCM version to set in genesis config.
 const SAFE_XCM_VERSION: u32 = xcm::prelude::XCM_VERSION;
@@ -632,54 +632,107 @@ pub fn glutton_kusama_local_testnet_config() -> Result<Box<dyn ChainSpec>, Strin
 }
 
 // EncointerKusama
+pub struct EncointerWellKnownKeys;
+
+impl EncointerWellKnownKeys {
+	pub fn endowed() -> Vec<AccountId> {
+		vec![Alice.to_account_id(), Bob.to_account_id(), Charlie.to_account_id()]
+	}
+
+	pub fn authorities() -> Vec<AuraId> {
+		vec![Alice.public().into()]
+	}
+
+	pub fn council() -> Vec<AccountId> {
+		vec![Alice.to_account_id()]
+	}
+}
+
 fn encointer_kusama_genesis(
 	wasm_binary: &[u8],
-	endowed_accounts: Vec<AccountId>,
+	encointer_council: Vec<AccountId>,
+	initial_authorities: Vec<AuraId>,
+	endowance_allocation: Vec<(AccountId, u128)>,
 	id: ParaId,
 ) -> encointer_kusama_runtime::RuntimeGenesisConfig {
 	encointer_kusama_runtime::RuntimeGenesisConfig {
 		system: encointer_kusama_runtime::SystemConfig {
 			code: wasm_binary.to_vec(),
-			..Default::default()
+			_config: Default::default(),
 		},
-		balances: encointer_kusama_runtime::BalancesConfig {
-			balances: endowed_accounts
-				.iter()
-				.cloned()
-				.map(|k| (k, ENCOINTER_KUSAMA_ED * 4096))
-				.collect(),
-		},
+		parachain_system: Default::default(),
+		balances: encointer_kusama_runtime::BalancesConfig { balances: endowance_allocation },
 		parachain_info: encointer_kusama_runtime::ParachainInfoConfig {
 			parachain_id: id,
 			..Default::default()
 		},
-		collective: Default::default(),
-		encointer_balances: Default::default(),
-		encointer_ceremonies: Default::default(),
-		encointer_communities: Default::default(),
-		encointer_faucet: Default::default(),
-		encointer_scheduler: Default::default(),
-		membership: Default::default(),
-		treasury: Default::default(),
-		aura: encointer_kusama_runtime::AuraConfig {
-			authorities: vec![get_from_seed::<sr25519::Public>("Alice").into()],
-		},
+		aura: encointer_kusama_runtime::AuraConfig { authorities: initial_authorities },
 		aura_ext: Default::default(),
-		parachain_system: Default::default(),
 		polkadot_xcm: encointer_kusama_runtime::PolkadotXcmConfig {
 			safe_xcm_version: Some(SAFE_XCM_VERSION),
-			..Default::default()
+			_config: Default::default(),
+		},
+		treasury: Default::default(),
+		collective: Default::default(),
+		membership: encointer_kusama_runtime::MembershipConfig {
+			members: encointer_council.try_into().expect("Council below council max members; qed."),
+			phantom: Default::default(),
+		},
+		encointer_scheduler: encointer_kusama_runtime::EncointerSchedulerConfig {
+			current_phase: CeremonyPhaseType::Registering,
+			current_ceremony_index: 1,
+			phase_durations: vec![
+				(CeremonyPhaseType::Registering, 604800000), // 7d
+				(CeremonyPhaseType::Assigning, 86400000),    // 1d
+				(CeremonyPhaseType::Attesting, 172800000),   // 2d
+			],
+			_config: Default::default(),
+		},
+		encointer_ceremonies: encointer_kusama_runtime::EncointerCeremoniesConfig {
+			ceremony_reward: BalanceType::from_num(1),
+			time_tolerance: 600_000,   // +-10min
+			location_tolerance: 1_000, // [m]
+			endorsement_tickets_per_bootstrapper: 10,
+			endorsement_tickets_per_reputable: 5,
+			reputation_lifetime: 5,
+			inactivity_timeout: 5, // idle ceremonies before purging community
+			meetup_time_offset: 0,
+			_config: Default::default(),
+		},
+		encointer_communities: encointer_kusama_runtime::EncointerCommunitiesConfig {
+			min_solar_trip_time_s: 1, // [s]
+			max_speed_mps: 1,         // [m/s] suggested would be 83m/s for security,
+			_config: Default::default(),
+		},
+		encointer_balances: encointer_kusama_runtime::EncointerBalancesConfig {
+			// for relative adjustment.
+			// 100_000 translates 5uKSM to 0.01 CC if ceremony reward is 20 CC
+			// lower values lead to lower fees in CC proportionally
+			fee_conversion_factor: 100_000,
+			_config: Default::default(),
+		},
+		encointer_faucet: encointer_kusama_runtime::EncointerFaucetConfig {
+			reserve_amount: 10_000_000_000_000,
+			_config: Default::default(),
 		},
 	}
 }
 
+pub const ENDOWED_FUNDING: u128 = 1 << 60;
+
 fn encointer_kusama_local_genesis(
 	wasm_binary: &[u8],
 ) -> encointer_kusama_runtime::RuntimeGenesisConfig {
+	/// Configure `endowed_accounts` with initial balance of `ENDOWED_FUNDING`.
+	pub fn allocate_endowance(endowed_accounts: Vec<AccountId>) -> Vec<(AccountId, u128)> {
+		endowed_accounts.into_iter().map(|k| (k, ENDOWED_FUNDING)).collect()
+	}
+
 	encointer_kusama_genesis(
-		// initial collators.
 		wasm_binary,
-		testnet_accounts(),
+		EncointerWellKnownKeys::council(),
+		EncointerWellKnownKeys::authorities(),
+		allocate_endowance(EncointerWellKnownKeys::endowed()),
 		1001.into(),
 	)
 }
