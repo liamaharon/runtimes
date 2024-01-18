@@ -1115,6 +1115,7 @@ pub enum ProxyType {
 	Governance = 2,
 	Staking = 3,
 	// Skip 4 as it is now removed (was SudoBalances)
+	SudoBalances = 4,
 	IdentityJudgement = 5,
 	CancelProxy = 6,
 	Auction = 7,
@@ -1160,6 +1161,7 @@ impl Default for ProxyType {
 impl InstanceFilter<RuntimeCall> for ProxyType {
 	fn filter(&self, c: &RuntimeCall) -> bool {
 		match self {
+			ProxyType::SudoBalances => true,
 			ProxyType::Any => true,
 			ProxyType::NonTransfer => matches!(
 				c,
@@ -1699,8 +1701,39 @@ pub mod migrations {
 		}
 	}
 
+	/// Clean up undecodable Proxy.
+	/// See <https://github.com/polkadot-fellows/runtimes/issues/104>
+	mod clean_up_undecodable_proxy {
+		use super::*;
+		use hex_literal::hex;
+
+		pub struct Migration;
+
+		const SUDO_BALANCES_PROXY_KEY: [u8; 72] =
+			hex!("1809d78346727a0ef58c0fa03bafa3231d885dcfb277f185f2d8e62a5f290c854d2d16b4be62d0e00e6de68b13b82479fbe988ab9ecb16bad446b67b993cdd9198cd41c7c6259c49");
+
+		impl frame_support::traits::OnRuntimeUpgrade for Migration {
+			fn on_runtime_upgrade() -> Weight {
+				// proxy decodes successfully here
+				let proxy = frame_support::storage::unhashed::get::<
+					Vec<(
+						<Runtime as frame_system::Config>::AccountId,
+						<Runtime as pallet_proxy::Config>::ProxyType,
+					)>,
+				>(&SUDO_BALANCES_PROXY_KEY)
+				.unwrap();
+
+				log::info!("{:?}", proxy);
+
+				frame_support::storage::unhashed::kill(&SUDO_BALANCES_PROXY_KEY);
+				Weight::from_parts(0, 1)
+			}
+		}
+	}
+
 	/// Unreleased migrations. Add new ones here:
 	pub type Unreleased = (
+		clean_up_undecodable_proxy::Migration,
 		// Upgrade SessionKeys to include BEEFY key
 		UpgradeSessionKeys,
 		pallet_nomination_pools::migration::versioned_migrations::V5toV6<Runtime>,
