@@ -18,6 +18,7 @@ serde = { version = "1.0.195", default-features = false }
 serde_derive = { version = "1.0.195", optional = true }
 static_assertions = "1.1.0"
 smallvec = "1.11.2"
+array-bytes = "6.2.2"
 
 authority-discovery-primitives = { package = "sp-authority-discovery", default-features = false , version = "25.0.0" }
 babe-primitives = { package = "sp-consensus-babe", default-features = false , version = "0.31.0" }
